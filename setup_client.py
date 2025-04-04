@@ -14,7 +14,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "mcc-client=mcc_client.main:main",
+            "nc-client=nc_client.main:main",
         ],
     },
 )
