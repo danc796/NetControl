@@ -1,0 +1,5 @@
+2025-04-04 19:09:24,795 - INFO - [logging.py:32] - Logging initialized at level INFO
+2025-04-04 19:09:24,796 - INFO - [manager.py:21] - Initializing nc Server Connection Manager
+2025-04-04 19:09:24,796 - INFO - [main.py:49] - Starting nc Server on 0.0.0.0:5000
+2025-04-04 19:09:24,796 - INFO - [manager.py:54] - Server started on 0.0.0.0:5000
+2025-04-04 19:09:45,756 - INFO - [manager.py:59] - New connection from ('192.168.1.120', 50291)
