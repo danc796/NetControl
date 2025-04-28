@@ -1,0 +1,6 @@
+2025-04-28 12:06:57,413 - INFO - Starting resource monitoring
+2025-04-28 12:06:57,414 - INFO - Hardware monitoring thread started
+2025-04-28 12:06:57,414 - INFO - Starting connection health monitoring
+2025-04-28 12:06:57,414 - INFO - Connection health monitoring thread started
+2025-04-28 12:06:59,104 - INFO - All connections closed
+2025-04-28 12:06:59,104 - INFO - Application shutting down
