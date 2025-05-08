@@ -1,0 +1,406 @@
+"""
+Connection Manager for the Central Management Server.
+Handles client connections, command processing, and responses.
+"""
+
+import socket
+import threading
+import json
+import logging
+from datetime import datetime
+
+from central_server.database.manager import DatabaseManager
+from central_server.connection.encryption import EncryptionManager
+from central_server.auth.user_manager import UserManager
+from central_server.utils.logging import log_connection, log_server_action, log_error
+
+
+class ConnectionManager:
+    def __init__(self, host='0.0.0.0', port=5001, use_ssl=True):
+        """Initialize the central server connection manager"""
+        logging.info("Initializing Central Server Connection Manager")
+
+        self.host = host
+        self.port = port
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.clients = {}  # Address -> client info
+
+        # Use the encryption manager
+        self.encryption_manager = EncryptionManager(use_ssl=use_ssl)
+        self.encryption_key = self.encryption_manager.encryption_key
+        self.cipher_suite = self.encryption_manager.cipher_suite
+
+        # Initialize database manager
+        self.database = DatabaseManager()
+
+        # Initialize user manager
+        self.user_manager = UserManager(self.database)
+
+        self.running = True
+
+        # Command handlers mapping
+        self.command_handlers = {
+            'login': self.handle_login,
+            'register_server': self.handle_register_server,
+            'unregister_server': self.handle_unregister_server,
+            'set_sharing': self.handle_set_sharing,
+            'get_all_servers': self.handle_get_all_servers,
+            'get_shared_servers': self.handle_get_shared_servers,
+            'get_user_connections': self.handle_get_user_connections,
+            'create_user': self.handle_create_user,
+            'ping': self.handle_ping
+        }
+
+    def start(self):
+        """Start the server and listen for connections"""
+        try:
+            # Configure the socket for reuse
+            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server_socket.bind((self.host, self.port))
+            self.server_socket.listen(5)
+            self.server_socket.settimeout(1.0)
+
+            logging.info(f"Central server started on {self.host}:{self.port} (SSL: {self.encryption_manager.use_ssl})")
+
+            while self.running:
+                try:
+                    client_socket, address = self.server_socket.accept()
+                    logging.info(f"New connection from {address}")
+
+                    # Start client handler thread
+                    client_handler = threading.Thread(
+                        target=self.handle_client,
+                        args=(client_socket, address)
+                    )
+                    client_handler.daemon = True
+                    client_handler.start()
+
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.running:
+                        logging.error(f"Error accepting connection: {e}")
+        except Exception as e:
+            logging.error(f"Server error: {e}")
+        finally:
+            self.stop()
+
+    def handle_client(self, client_socket, address):
+        """Handle client connection with SSL"""
+        wrapped_socket = None
+        try:
+            # Wrap socket with SSL
+            try:
+                wrapped_socket = self.encryption_manager.wrap_socket(client_socket)
+                log_connection(address, action="established SSL connection")
+            except Exception as ssl_error:
+                log_error(f"SSL error with {address}", ssl_error)
+                client_socket.close()
+                return
+
+            # Set a timeout for operations
+            wrapped_socket.settimeout(5.0)
+
+            # First send the server's certificate if available
+            cert_data = self.encryption_manager.get_certificate_data()
+            if cert_data:
+                # Send certificate size first (4 bytes, big endian)
+                cert_size = len(cert_data)
+                wrapped_socket.send(cert_size.to_bytes(4, byteorder='big'))
+
+                # Then send certificate data
+                wrapped_socket.send(cert_data)
+                logging.info(f"Sent server certificate to {address}")
+            else:
+                # Send zero size if no certificate
+                wrapped_socket.send((0).to_bytes(4, byteorder='big'))
+                logging.warning(f"No certificate available to send to {address}")
+
+            # Send encryption key for message-level encryption
+            wrapped_socket.send(self.encryption_key)
+
+            # Shorter timeout for regular operations
+            wrapped_socket.settimeout(30.0)  # Longer timeout for regular operations
+
+            # Store client information
+            self.clients[address] = {
+                'socket': wrapped_socket,
+                'last_seen': datetime.now(),
+                'user_id': None,  # Will be set after authentication
+                'username': None
+            }
+
+            # Main communication loop
+            while self.running:
+                try:
+                    # Receive encrypted data
+                    encrypted_data = wrapped_socket.recv(4096)
+                    if not encrypted_data:
+                        logging.info(f"Client {address} disconnected (empty data)")
+                        break
+
+                    # Decrypt and process command
+                    data = self.cipher_suite.decrypt(encrypted_data).decode()
+
+                    # Parse command
+                    command = json.loads(data)
+
+                    # Process the command
+                    response = self.process_command(command, address)
+
+                    # Add hash for response integrity
+                    response_json = json.dumps(response)
+                    response_hash = self.encryption_manager.hash_data(response_json)
+
+                    # Add hash to response for integrity validation
+                    response['hash'] = response_hash
+                    response_json = json.dumps(response)
+
+                    # Encrypt and send response
+                    encrypted_response = self.cipher_suite.encrypt(response_json.encode())
+                    wrapped_socket.send(encrypted_response)
+
+                except socket.timeout:
+                    # Just continue on timeout (this is normal)
+                    continue
+                except json.JSONDecodeError as e:
+                    logging.error(f"Invalid JSON from {address}: {e}")
+                    continue
+                except Exception as e:
+                    logging.error(f"Error handling client {address}: {e}")
+                    break
+
+
+        except Exception as e:
+            log_error(f"Client handler error for {address}", e)
+        finally:
+            # Clean up client connection
+            client_info = self.clients.pop(address, None)
+
+            if client_info and client_info.get('user_id'):
+                log_connection(address, client_info.get('username'), "disconnected")
+
+            try:
+                if wrapped_socket:
+                    wrapped_socket.close()
+                else:
+                    client_socket.close()
+            except Exception as close_error:
+                logging.error(f"Error closing socket: {close_error}")
+
+            logging.info(f"Connection closed from {address}")
+
+    def process_command(self, command, address):
+        """Process client command and return response"""
+        try:
+            cmd_type = command.get('type', '')
+            cmd_data = command.get('data', {})
+
+            # Debug logging
+            logging.debug(f"Received command: {cmd_type} with data: {cmd_data}")
+
+            # Get the appropriate handler for this command type
+            handler = self.command_handlers.get(cmd_type)
+
+            if handler:
+                # Ensure cmd_data is a dictionary
+                if not isinstance(cmd_data, dict):
+                    cmd_data = {}
+
+                # Special handling for commands that need authentication
+                client_info = self.clients.get(address, {})
+                user_id = client_info.get('user_id')
+
+                # Login doesn't need authentication, but other commands do
+                if cmd_type != 'login' and cmd_type != 'ping' and not user_id:
+                    return {'status': 'error', 'message': 'Authentication required'}
+
+                # Call the handler with the command data
+                return handler(cmd_data, address)
+            else:
+                logging.warning(f"Unknown command received: {cmd_type}")
+                return {'status': 'error', 'message': f'Unknown command: {cmd_type}'}
+
+        except Exception as e:
+            logging.error(f"Error processing command: {str(e)}")
+            return {'status': 'error', 'message': 'Internal server error'}
+
+    def handle_login(self, data, address):
+        """Handle login request"""
+        username = data.get('username')
+        password = data.get('password')
+
+        if not username or not password:
+            return {'status': 'error', 'message': 'Username and password are required'}
+
+        success, user = self.user_manager.authenticate_user(username, password)
+
+        if success:
+            # Store user info in client connection
+            self.clients[address]['user_id'] = user['user_id']
+
+            # Add these two lines here:
+            self.clients[address]['username'] = user['username']
+            log_connection(address, user['username'], "authenticated")
+
+            logging.info(f"User {username} logged in successfully")
+
+            return {
+                'status': 'success',
+                'message': 'Login successful',
+                'data': {
+                    'user_id': user['user_id'],
+                    'username': user['username'],
+                    'is_admin': user['is_admin']
+                }
+            }
+        else:
+            logging.warning(f"Failed login attempt for username: {username}")
+            return {'status': 'error', 'message': 'Invalid username or password'}
+
+    def handle_register_server(self, data, address):
+        """Handle server registration"""
+        ip_address = data.get('ip_address')
+        port = data.get('port')
+
+        if not ip_address or not port:
+            return {'status': 'error', 'message': 'IP address and port are required'}
+
+        user_id = self.clients[address]['user_id']
+        username = self.clients[address]['username']
+
+        success, message = self.database.register_server(ip_address, port, user_id)
+
+        if success:
+            log_server_action(address, username, ip_address, port, "registered")
+        else:
+            log_error(f"Failed to register server {ip_address}:{port} for user {username}: {message}")
+
+        return {
+            'status': 'success' if success else 'error',
+            'message': message
+        }
+
+    def handle_unregister_server(self, data, address):
+        """Handle server unregistration"""
+        ip_address = data.get('ip_address')
+        port = data.get('port')
+
+        if not ip_address or not port:
+            return {'status': 'error', 'message': 'IP address and port are required'}
+
+        user_id = self.clients[address]['user_id']
+
+        success, message = self.database.unregister_server(ip_address, port, user_id)
+
+        return {
+            'status': 'success' if success else 'error',
+            'message': message
+        }
+
+    def handle_set_sharing(self, data, address):
+        """Handle connection sharing setting"""
+        ip_address = data.get('ip_address')
+        port = data.get('port')
+        is_shared = data.get('is_shared', False)
+
+        if not ip_address or not port:
+            return {'status': 'error', 'message': 'IP address and port are required'}
+
+        user_id = self.clients[address]['user_id']
+
+        success, message = self.database.set_connection_sharing(
+            user_id, ip_address, port, is_shared
+        )
+
+        return {
+            'status': 'success' if success else 'error',
+            'message': message
+        }
+
+    def handle_get_all_servers(self, data, address):
+        """Handle request for all active servers"""
+        servers = self.database.get_all_active_servers()
+
+        return {
+            'status': 'success',
+            'data': servers
+        }
+
+    def handle_get_shared_servers(self, data, address):
+        """Handle request for shared servers"""
+        servers = self.database.get_shared_servers()
+
+        return {
+            'status': 'success',
+            'data': servers
+        }
+
+    def handle_get_user_connections(self, data, address):
+        """Handle request for user's connections"""
+        user_id = self.clients[address]['user_id']
+        connections = self.database.get_user_connections(user_id)
+
+        return {
+            'status': 'success',
+            'data': connections
+        }
+
+    def handle_ping(self, data, address):
+        """Handle ping request"""
+        # Update last seen time
+        if address in self.clients:
+            self.clients[address]['last_seen'] = datetime.now()
+
+        return {
+            'status': 'success',
+            'message': 'pong',
+            'timestamp': str(datetime.now())
+        }
+
+    def handle_create_user(self, data, address):
+        """Handle user creation request from an admin"""
+        # Get admin user information
+        admin_id = self.clients[address]['user_id']
+        admin_username = self.clients[address]['username']
+
+        # Get new user information
+        new_username = data.get('username')
+        new_password = data.get('password')
+        is_admin = data.get('is_admin', False)
+
+        if not new_username or not new_password:
+            return {'status': 'error', 'message': 'Username and password are required'}
+
+        # Create the user
+        success, message = self.user_manager.create_user_as_admin(
+            admin_id, new_username, new_password, is_admin
+        )
+
+        if success:
+            log_connection(address, admin_username, f"created new user '{new_username}'")
+
+        return {
+            'status': 'success' if success else 'error',
+            'message': message
+        }
+
+    def stop(self):
+        """Stop the server and clean up connections"""
+        logging.info("Shutting down central server...")
+        self.running = False
+
+        # Close all client connections
+        for client in list(self.clients.values()):
+            try:
+                client['socket'].close()
+            except:
+                pass
+
+        # Close server socket
+        try:
+            self.server_socket.close()
+        except:
+            pass
+
+        logging.info("Central server shutdown complete")
