@@ -1,0 +1,33 @@
+2025-05-26 21:02:53,820 - INFO - [logging.py:51] - ==================================================
+2025-05-26 21:02:53,820 - INFO - [logging.py:52] - Application starting at 2025-05-26 21:02:53
+2025-05-26 21:02:53,820 - INFO - [logging.py:53] - Logging initialized at level INFO
+2025-05-26 21:02:53,820 - INFO - [logging.py:54] - Log file: logs\nc_client_20250526_210253.log
+2025-05-26 21:02:53,820 - INFO - [logging.py:55] - ==================================================
+2025-05-26 21:02:53,820 - INFO - [main.py:27] - NetControl Client starting...
+2025-05-26 21:03:04,002 - INFO - [encryption.py:47] - Received RSA public key (451 bytes) from server
+2025-05-26 21:03:04,011 - INFO - [encryption.py:70] - Sent encrypted AES key (256 bytes) to server
+2025-05-26 21:03:04,011 - INFO - [encryption.py:74] - RSA + AES hybrid encryption successfully established
+2025-05-26 21:03:04,011 - INFO - [client.py:76] - Connected to central server at 192.168.1.120:5001 with RSA + AES hybrid encryption
+2025-05-26 21:03:04,080 - ERROR - [client.py:145] - Login failed: Invalid username or password
+2025-05-26 21:03:06,562 - INFO - [encryption.py:47] - Received RSA public key (451 bytes) from server
+2025-05-26 21:03:06,563 - INFO - [encryption.py:70] - Sent encrypted AES key (256 bytes) to server
+2025-05-26 21:03:06,563 - INFO - [encryption.py:74] - RSA + AES hybrid encryption successfully established
+2025-05-26 21:03:06,564 - INFO - [client.py:76] - Connected to central server at 192.168.1.120:5001 with RSA + AES hybrid encryption
+2025-05-26 21:03:06,645 - INFO - [client.py:133] - Successfully logged in as admin
+2025-05-26 21:03:06,861 - INFO - [system_monitor.py:31] - Starting resource monitoring
+2025-05-26 21:03:06,861 - INFO - [system_monitor.py:27] - Hardware monitoring thread started
+2025-05-26 21:03:06,861 - INFO - [manager.py:526] - Starting connection health monitoring
+2025-05-26 21:03:06,861 - INFO - [manager.py:522] - Connection health monitoring thread started
+2025-05-26 21:03:13,585 - INFO - [manager.py:81] - Connection established with 192.168.1.120:5000 using RSA + AES hybrid encryption
+2025-05-26 21:03:13,754 - INFO - [encryption.py:47] - Received RSA public key (451 bytes) from server
+2025-05-26 21:03:13,755 - INFO - [encryption.py:70] - Sent encrypted AES key (256 bytes) to server
+2025-05-26 21:03:13,755 - INFO - [encryption.py:74] - RSA + AES hybrid encryption successfully established
+2025-05-26 21:03:14,453 - INFO - [client.py:314] - Registered server 192.168.1.120:5000
+2025-05-26 21:03:14,478 - INFO - [client.py:363] - Sharing enabled for server 192.168.1.120:5000
+2025-05-26 21:03:14,490 - INFO - [client.py:320] - Automatically shared server 192.168.1.120:5000
+2025-05-26 21:03:14,498 - INFO - [manager.py:165] - Successfully registered and shared server 192.168.1.120:5000 with central server
+2025-05-26 21:04:13,365 - INFO - [client.py:198] - Created new user: qwe
+2025-05-26 21:04:16,308 - INFO - [client.py:527] - Disconnected from central server
+2025-05-26 21:04:16,308 - INFO - [central_server_tab.py:608] - Restarting application after logout...
+2025-05-26 21:04:16,308 - INFO - [manager.py:619] - All connections closed
+2025-05-26 21:04:16,897 - INFO - [system_monitor.py:44] - Resource monitoring stopped
